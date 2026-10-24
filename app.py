@@ -493,6 +493,26 @@ def stock_by_product(
     return stock
 
 
+def stock_by_lot(movements: list[dict[str, Any]], product_id: str) -> dict[str, int]:
+    stock: dict[str, int] = {}
+    for record in movements:
+        fields = record_fields(record)
+        if str(fields.get("Producto ID", "")) != product_id:
+            continue
+        lot_value = fields.get("Lote")
+        lot = str(lot_value).strip().upper() if lot_value else "SIN LOTE"
+        quantity = int(fields["Cantidad"])
+        stock[lot] = stock.get(lot, 0) + (
+            quantity if fields.get("Tipo") == "Entrada" else -quantity
+        )
+    negative_lots = [lot for lot, quantity in stock.items() if quantity < 0]
+    if negative_lots:
+        raise AirtableError(
+            "El historial de Airtable produce existencias negativas para uno o más lotes. Revisa las salidas antes de continuar."
+        )
+    return {lot: quantity for lot, quantity in stock.items() if quantity > 0}
+
+
 def get_products(client: AirtableClient) -> list[dict[str, Any]]:
     return client.list_records(PRODUCT_TABLE)
 
@@ -676,8 +696,10 @@ def add_movement_batch(
             or quantity < 1
         ):
             raise AppError("Cada lote debe tener una cantidad entera mayor que cero.")
-        normalized_lines.append({"Lote": lot.strip(), "Cantidad": quantity})
+        normalized_lines.append({"Lote": lot.strip().upper(), "Cantidad": quantity})
         total_quantity += quantity
+    if len({line["Lote"] for line in normalized_lines}) != len(normalized_lines):
+        raise AppError("No repitas el mismo lote; combina sus cantidades en una sola fila.")
 
     with MOVEMENT_LOCK:
         products = get_products(client)
@@ -700,6 +722,14 @@ def add_movement_batch(
             raise AppError(
                 f"Existencia insuficiente: quedan {stock[product_id]} presentación(es) de {record_fields(product).get('Nombre', product_id)}."
             )
+        if movement_type == "Salida":
+            available_by_lot = stock_by_lot(movements, product_id)
+            for line in normalized_lines:
+                available = available_by_lot.get(line["Lote"], 0)
+                if line["Cantidad"] > available:
+                    raise AppError(
+                        f"El lote {line['Lote']} tiene {available} caja(s) disponible(s); no se puede registrar una salida de {line['Cantidad']}."
+                    )
         fields = record_fields(product)
         price = fields.get("Precio")
         if price is not None and (
@@ -829,6 +859,19 @@ def render_stock(
         quantity = stock.get(product_id, 0)
         with columns[index % len(columns)]:
             st.metric(str(fields.get("Nombre", product_id)), f"{quantity} presentaciones")
+            lot_stock = stock_by_lot(movements, product_id)
+            if lot_stock:
+                with st.expander("Existencias por lote", expanded=False):
+                    st.dataframe(
+                        [
+                            {"Lote": lot, "Cajas disponibles": count}
+                            for lot, count in sorted(lot_stock.items())
+                        ],
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+            else:
+                st.caption("Sin existencias registradas por lote.")
             if role == "admin":
                 price = fields.get("Precio")
                 st.caption(f"Precio: {format_money(price, currency)}")
@@ -937,7 +980,7 @@ def clear_photo_proposal() -> None:
 def render_movement_form(
     client: AirtableClient,
     products: list[dict[str, Any]],
-    stock: dict[str, int],
+    movements: list[dict[str, Any]],
     username: str,
 ) -> None:
     active_products = [
@@ -958,38 +1001,68 @@ def render_movement_form(
     proposed_quantity = st.session_state.get("ocr_quantity")
     default_quantity = proposed_quantity if isinstance(proposed_quantity, int) and proposed_quantity > 0 else 1
     proposed_lot = st.session_state.get("ocr_lot")
-    default_lot_lines = [
-        {
-            "Lote": proposed_lot if isinstance(proposed_lot, str) else "",
-            "Cantidad": default_quantity,
-        }
-    ]
 
     st.subheader("Registrar entrada o salida")
     st.caption(
         f"Hora actual de Perú: {peru_now():%d/%m/%Y %H:%M:%S}. "
         "La fecha y hora se guardan al confirmar el movimiento."
     )
-    with st.form("movement_form", clear_on_submit=True):
-        movement_type = st.selectbox("Movimiento", ("Entrada", "Salida"))
-        product_id = st.selectbox(
-            "Producto",
-            product_ids,
-            index=product_index,
-            format_func=lambda value: str(record_fields(by_id[value]).get("Nombre", value)),
+    movement_type = st.selectbox(
+        "Movimiento", ("Entrada", "Salida"), key="movement_type"
+    )
+    product_id = st.selectbox(
+        "Producto",
+        product_ids,
+        index=product_index,
+        format_func=lambda value: str(record_fields(by_id[value]).get("Nombre", value)),
+        key="movement_product_id",
+    )
+    available_lots = stock_by_lot(movements, product_id)
+    if movement_type == "Salida" and not available_lots:
+        st.warning("No hay cajas disponibles de este producto en ningún lote.")
+        return
+    if movement_type == "Salida":
+        default_lot = (
+            proposed_lot.strip().upper()
+            if isinstance(proposed_lot, str)
+            and proposed_lot.strip().upper() in available_lots
+            else next(iter(sorted(available_lots)))
         )
+        lot_options = sorted(available_lots)
+        default_lot_lines = [
+            {"Lote": default_lot, "Cantidad": min(default_quantity, available_lots[default_lot])}
+        ]
+    else:
+        lot_options = []
+        default_lot_lines = [
+            {
+                "Lote": proposed_lot if isinstance(proposed_lot, str) else "",
+                "Cantidad": default_quantity,
+            }
+        ]
+    editor_key = f"movement_lot_lines_{movement_type}_{product_id}"
+    with st.form("movement_form", clear_on_submit=True):
         lot_lines = st.data_editor(
             default_lot_lines,
             num_rows="dynamic",
             use_container_width=True,
             hide_index=True,
-            key="movement_lot_lines",
+            key=editor_key,
             column_config={
-                "Lote": st.column_config.TextColumn(
-                    "Lote de fabricación",
-                    help="Código de lote leído de la etiqueta o capturado manualmente.",
-                    required=True,
-                    max_chars=40,
+                "Lote": (
+                    st.column_config.SelectboxColumn(
+                        "Lote de fabricación",
+                        help="Selecciona el lote del que salen las cajas.",
+                        options=lot_options,
+                        required=True,
+                    )
+                    if movement_type == "Salida"
+                    else st.column_config.TextColumn(
+                        "Lote de fabricación",
+                        help="Código de lote leído de la etiqueta o capturado manualmente.",
+                        required=True,
+                        max_chars=40,
+                    )
                 ),
                 "Cantidad": st.column_config.NumberColumn(
                     "Cantidad de cajas",
@@ -1005,7 +1078,13 @@ def render_movement_form(
             value=peru_now().date(),
         )
         note = st.text_input("Nota opcional", max_chars=160)
-        st.caption("Puedes añadir varias filas de lote; se guardarán juntas como una operación.")
+        if movement_type == "Salida":
+            st.caption(
+                "Elige exactamente de qué lotes salen las cajas. "
+                "La existencia de cada lote se valida al guardar."
+            )
+        else:
+            st.caption("Puedes añadir varias filas de lote; se guardarán juntas como una operación.")
         confirmed = st.checkbox("Confirmo que revisé el tipo, producto, lotes, cantidades y fecha.")
         submitted = st.form_submit_button("Guardar movimiento", type="primary")
     if submitted:
@@ -1020,10 +1099,6 @@ def render_movement_form(
                     if isinstance(line.get("Cantidad"), (int, float))
                     and not isinstance(line.get("Cantidad"), bool)
                 )
-                if movement_type == "Salida" and total_quantity > stock.get(product_id, 0):
-                    raise AppError(
-                        f"Existencia insuficiente: quedan {stock.get(product_id, 0)} presentación(es) de {record_fields(by_id[product_id]).get('Nombre', product_id)}."
-                    )
                 add_movement_batch(
                     client,
                     movement_type=movement_type,
@@ -1527,7 +1602,7 @@ def run_app() -> None:
 
     stock = render_stock(products, movements, role, currency)
     st.divider()
-    render_movement_form(client, products, stock, username)
+    render_movement_form(client, products, movements, username)
 
     if role == "admin":
         if app_settings.get("bootstrap_admin_password"):
