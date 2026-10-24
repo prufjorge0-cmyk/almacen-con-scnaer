@@ -6,7 +6,7 @@ Aplicación con Streamlit y Airtable para que trabajadores registren entradas y 
 
 - Los trabajadores inician sesión con una cuenta individual autorizada, ven existencias y registran movimientos. No ven precios, reportes, administración ni respaldos.
 - El administrador inicial configura `app.bootstrap_admin_username` y `app.bootstrap_admin_password` en secretos del servidor. Después puede mantener productos y precios, autorizar/desactivar trabajadores, restablecerles contraseñas, consultar reportes semanales y descargar un respaldo.
-- La app comprueba el usuario, el hash de contraseña, su rol y si la cuenta sigue activa. Las contraseñas requieren al menos 12 caracteres y se guardan como hashes PBKDF2 con sal. Los intentos fallidos se limitan temporalmente por sesión; cambiar o restablecer la contraseña invalida las sesiones anteriores. El token personal de Airtable nunca se entrega al navegador.
+- La app comprueba el usuario, el hash de contraseña, su rol y si la cuenta sigue activa. Las contraseñas requieren al menos 8 caracteres y se guardan como hashes PBKDF2 con sal. Los intentos fallidos se limitan temporalmente por sesión; cambiar o restablecer la contraseña invalida las sesiones anteriores. El token personal de Airtable nunca se entrega al navegador.
 - Mantén la base de Airtable privada y limita el acceso directo a sus colaboradores administradores. Los trabajadores deben entrar por la app, no como colaboradores de la base.
 - Los movimientos conservan el precio vigente al registrarse. Las salidas se vuelven a comprobar contra el inventario de Airtable antes de escribir.
 - La fecha predeterminada, la hora de cada movimiento, los reportes y el nombre/fecha del respaldo usan la zona `America/Lima`. Airtable guarda fecha y hora en el campo de texto `Fecha`; los movimientos históricos que solo tengan fecha siguen siendo compatibles.
@@ -72,7 +72,7 @@ python -m pip install -r requirements.txt
 Copy-Item .streamlit\secrets.toml.example .streamlit\secrets.toml
 ```
 
-Edita `.streamlit\secrets.toml` con el token de Airtable y una cuenta administrativa temporal. Usa una contraseña temporal única de al menos 12 caracteres; guárdala solo en los secretos del servidor. Conserva los secretos fuera de Git. No escribas claves en `.streamlit\secrets.toml.example`, que solo es una plantilla. Luego inicia la app:
+Edita `.streamlit\secrets.toml` con el token de Airtable y una cuenta administrativa temporal. Usa una contraseña temporal única de al menos 8 caracteres; guárdala solo en los secretos del servidor. Conserva los secretos fuera de Git. No escribas claves en `.streamlit\secrets.toml.example`, que solo es una plantilla. Luego inicia la app:
 
 ```powershell
 streamlit run app.py
@@ -82,7 +82,7 @@ streamlit run app.py
 
 Streamlit Community Cloud despliega desde un repositorio GitHub. Sube estos archivos a un repositorio privado, crea una app apuntando a `app.py` y carga los valores de `.streamlit\secrets.toml.example` en **App settings → Secrets**. No subas `.streamlit/secrets.toml` ni contraseñas reales al repositorio.
 
-Al abrir por primera vez, la app crea la cuenta administradora con las credenciales temporales del secreto. Inicia sesión y cámbiala desde **Cambiar mi contraseña**; luego elimina `bootstrap_admin_username` y `bootstrap_admin_password` de los secretos y vuelve a iniciar la app. En **Usuarios**, asigna a cada trabajador un nombre de usuario y una contraseña inicial de al menos 12 caracteres; comunícaselos de forma privada. Cada trabajador puede cambiar su propia contraseña. Desactiva su acceso desde el mismo panel cuando ya no trabaje contigo.
+Al abrir por primera vez, la app crea la cuenta administradora con las credenciales temporales del secreto. Inicia sesión y cámbiala desde **Cambiar mi contraseña**; luego elimina `bootstrap_admin_username` y `bootstrap_admin_password` de los secretos y vuelve a iniciar la app. En **Usuarios**, asigna a cada trabajador un nombre de usuario y una contraseña inicial de al menos 8 caracteres; comunícaselos de forma privada. Cada trabajador puede cambiar su propia contraseña. Desactiva su acceso desde el mismo panel cuando ya no trabaje contigo.
 
 Si pierdes el acceso de administrador, configura un usuario y una contraseña temporal nuevos en `app.bootstrap_admin_username` y `app.bootstrap_admin_password`, y activa `app.reset_admin_password = true` en Secrets. La app cambiará únicamente el hash de la cuenta administradora cuyo usuario coincida. Después, desactiva `app.reset_admin_password` en Secrets antes de iniciar sesión y cambiar la contraseña; mientras esté activo, la contraseña temporal seguirá teniendo prioridad. Si la cuenta está desactivada, primero reactívala en Airtable.
 
