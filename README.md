@@ -88,7 +88,7 @@ Si pierdes el acceso de administrador, configura un usuario y una contraseña te
 - El panel de trabajadores sirve para consultar cantidades y registrar entradas/salidas manualmente o desde una propuesta de foto.
 - El administrador configura precios y catálogo, consulta el reporte de cada semana y descarga CSV.
 - **Airtable y respaldos** permite descargar un JSON con los datos actuales. La app no elimina movimientos; desactiva productos o personas para conservar el historial.
-- El OCR requiere `tesseract-ocr` y el idioma `spa`. La calidad depende de iluminación, nitidez y texto legible; siempre revisa la propuesta.
+- El OCR requiere `tesseract-ocr` y el idioma `spa`. Reconoce texto impreso como `Barquimieles` o el alias confirmado `Barquiroll Premium`; `Contenido: 360 UND` identifica la presentación, no el número de presentaciones en inventario. La cantidad del movimiento debe aparecer indicada por separado; si no se reconoce, complétala en el formulario. La calidad depende de iluminación, nitidez y texto legible; siempre revisa y confirma la propuesta.
 - El formato monetario predeterminado es MXN; se puede cambiar `app.currency` en los secretos.
 
 ## Migrar registros de la app local anterior
