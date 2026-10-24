@@ -133,6 +133,31 @@ class InventoryTests(unittest.TestCase):
         self.assertIn("PEN 18.00", message)
         self.assertNotIn("B-02", message)
 
+    def test_daily_report_lists_store_consumption_without_sale_value(self):
+        movements = [
+            record(
+                "m1",
+                {
+                    "ID": "m1",
+                    "Tipo": "Consumo de tienda",
+                    "Producto ID": "coronitas",
+                    "Producto": "Coronitas",
+                    "Cantidad": 2,
+                    "Lote": "C-10",
+                    "Fecha": "2026-10-24T08:00:00-05:00",
+                    "Precio unitario": 15,
+                },
+            )
+        ]
+
+        message = daily_report_message(
+            movements, [], date(2026, 10, 24), "PEN"
+        )
+
+        self.assertIn("Consumo de tienda: 2 caja(s)", message)
+        self.assertIn("Coronitas | Lote C-10: 2 caja(s)", message)
+        self.assertNotIn("PEN 30.00", message)
+
     def test_daily_report_and_whatsapp_url_handle_empty_day_and_unicode(self):
         message = daily_report_message([], [], date(2026, 10, 24), "PEN")
         self.assertIn("Sin movimientos registrados ese día.", message)
@@ -241,6 +266,89 @@ class InventoryTests(unittest.TestCase):
             stock_by_product(products, movements),
             {"barquimieles-360": 3, "coronitas": 7},
         )
+
+    def test_store_consumption_decrements_stock_and_lot(self):
+        product = record(
+            "p1",
+            {"ID": "coronitas", "Nombre": "Coronitas", "Precio": 15, "Activo": True},
+        )
+        client = FakeAirtableClient(
+            [product],
+            [
+                record(
+                    "m1",
+                    {
+                        "ID": "m1",
+                        "Producto ID": "coronitas",
+                        "Tipo": "Entrada",
+                        "Cantidad": 5,
+                        "Fecha": "2026-10-24",
+                        "Lote": "C-10",
+                    },
+                ),
+            ],
+        )
+
+        add_movement(
+            client,
+            movement_type="Consumo de tienda",
+            product_id="coronitas",
+            quantity=2,
+            movement_date=date(2026, 10, 24),
+            note="Consumo interno",
+            username="worker",
+            lot="C-10",
+        )
+
+        self.assertEqual(client.movements[-1]["fields"]["Tipo"], "Consumo de tienda")
+        self.assertEqual(stock_by_product([product], client.movements), {"coronitas": 3})
+        self.assertEqual(stock_by_lot(client.movements, "coronitas"), {"C-10": 3})
+
+    def test_store_consumption_cannot_exceed_selected_lot_stock(self):
+        product = record(
+            "p1",
+            {"ID": "coronitas", "Nombre": "Coronitas", "Precio": 15, "Activo": True},
+        )
+        client = FakeAirtableClient(
+            [product],
+            [
+                record(
+                    "m1",
+                    {
+                        "ID": "m1",
+                        "Producto ID": "coronitas",
+                        "Tipo": "Entrada",
+                        "Cantidad": 2,
+                        "Fecha": "2026-10-24",
+                        "Lote": "C-10",
+                    },
+                ),
+                record(
+                    "m2",
+                    {
+                        "ID": "m2",
+                        "Producto ID": "coronitas",
+                        "Tipo": "Entrada",
+                        "Cantidad": 5,
+                        "Fecha": "2026-10-24",
+                        "Lote": "C-11",
+                    },
+                ),
+            ],
+        )
+        from app import add_movement_batch
+
+        with self.assertRaisesRegex(AppError, "lote C-10 tiene 2 caja"):
+            add_movement_batch(
+                client,
+                movement_type="Consumo de tienda",
+                product_id="coronitas",
+                lot_lines=[{"Lote": "C-10", "Cantidad": 3}],
+                movement_date=date(2026, 10, 24),
+                note="",
+                username="worker",
+            )
+        self.assertEqual(len(client.movements), 2)
 
     def test_lot_stock_is_derived_separately_and_legacy_moves_are_grouped(self):
         movements = [

@@ -4,7 +4,7 @@ Aplicación con Streamlit y Airtable para que trabajadores registren entradas y 
 
 ## Seguridad y alcance
 
-- Los trabajadores inician sesión con una cuenta individual autorizada, ven existencias y registran movimientos. No ven precios, reportes semanales, administración ni respaldos. Pueden enviar al administrador un resumen diario de cantidades y lotes por WhatsApp, sin mostrar precios.
+- Los trabajadores inician sesión con una cuenta individual autorizada, ven existencias y registran entradas, salidas y consumo de tienda. Salidas y consumo descuentan existencias según el lote; el consumo se identifica por separado y no se trata como venta. No ven precios, reportes semanales, administración ni respaldos. Pueden enviar al administrador un resumen diario de cantidades y lotes por WhatsApp, sin mostrar precios.
 - El administrador inicial configura `app.bootstrap_admin_username` y `app.bootstrap_admin_password` en secretos del servidor. Después puede mantener productos y precios, autorizar/desactivar trabajadores, restablecerles contraseñas, consultar reportes semanales y descargar un respaldo.
 - La app comprueba el usuario, el hash de contraseña, su rol y si la cuenta sigue activa. Las contraseñas requieren al menos 8 caracteres y se guardan como hashes PBKDF2 con sal. Los intentos fallidos se limitan temporalmente por sesión; cambiar o restablecer la contraseña invalida las sesiones anteriores. El token personal de Airtable nunca se entrega al navegador.
 - Mantén la base de Airtable privada y limita el acceso directo a sus colaboradores administradores. Los trabajadores deben entrar por la app, no como colaboradores de la base.
@@ -88,8 +88,8 @@ Si pierdes el acceso de administrador, configura un usuario y una contraseña te
 
 ## Uso y respaldos
 
-- El panel de trabajadores sirve para consultar cantidades y registrar entradas/salidas manualmente o desde una propuesta de foto. Cada fila debe incluir el código de lote y su cantidad; una operación puede contener varios lotes. El botón de WhatsApp abre directamente el chat del número configurado con un resumen diario sin precios; la persona debe revisar y confirmar el envío en WhatsApp.
-- El administrador configura precios y catálogo, consulta el reporte de cada semana y descarga CSV. También puede elegir un día y abrir el resumen diario para compartirlo desde WhatsApp.
+- El panel de trabajadores sirve para consultar cantidades y registrar entradas, salidas y consumo de tienda manualmente o desde una propuesta de foto. Cada fila debe incluir el código de lote y su cantidad; una operación puede contener varios lotes. El botón de WhatsApp abre directamente el chat del número configurado con un resumen diario sin precios; la persona debe revisar y confirmar el envío en WhatsApp.
+- El administrador configura precios y catálogo, consulta el reporte de cada semana y descarga CSV. Los reportes separan entradas, salidas y consumo interno; el valor de venta solo incluye salidas. También puede elegir un día y abrir el resumen diario para compartirlo desde WhatsApp.
 - **Airtable y respaldos** permite descargar un JSON con los datos actuales. La app no elimina movimientos; desactiva productos o personas para conservar el historial.
 - El OCR requiere `tesseract-ocr` y el idioma `spa`. Reconoce texto impreso como `Barquimieles` o el alias confirmado `Barquiroll Premium`, y propone el código cuando aparece junto a `Lote`. `Contenido: 360 UND` identifica la presentación, no el número de presentaciones en inventario. La cantidad del movimiento debe aparecer indicada por separado; si no se reconoce, complétala en la tabla de lotes. La calidad depende de iluminación, nitidez y texto legible; siempre revisa y confirma la propuesta.
 - El formato monetario predeterminado es MXN; se puede cambiar `app.currency` en los secretos.

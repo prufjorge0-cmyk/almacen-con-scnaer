@@ -35,6 +35,7 @@ DEFAULT_PRODUCTS = (
     ("barquimieles-12", "Barquimieles de 12 unidades"),
     ("coronitas", "Coronitas"),
 )
+STOCK_DECREASING_MOVEMENT_TYPES = ("Salida", "Consumo de tienda")
 MOVEMENT_LOCK = threading.Lock()
 AIRTABLE_REQUEST_LOCK = threading.Lock()
 LAST_AIRTABLE_REQUEST = 0.0
@@ -474,7 +475,7 @@ def stock_by_product(
             or not movement_id
             or movement_id in movement_ids
             or product_id not in stock
-            or movement_type not in ("Entrada", "Salida")
+            or movement_type not in ("Entrada", *STOCK_DECREASING_MOVEMENT_TYPES)
             or format_date(fields.get("Fecha")) is None
             or isinstance(quantity, bool)
             or not isinstance(quantity, (int, float))
@@ -493,7 +494,11 @@ def stock_by_product(
         ):
             raise AirtableError("Hay un movimiento con datos inválidos en Airtable.")
         movement_ids.add(movement_id)
-        stock[product_id] += int(quantity) if movement_type == "Entrada" else -int(quantity)
+        stock[product_id] += (
+            int(quantity)
+            if movement_type == "Entrada"
+            else -int(quantity)
+        )
     if any(quantity < 0 for quantity in stock.values()):
         raise AirtableError(
             "El historial de Airtable produce existencias negativas. Revisa los movimientos antes de continuar."
@@ -681,7 +686,7 @@ def add_movement_batch(
     note: str,
     username: str,
 ) -> None:
-    if movement_type not in ("Entrada", "Salida"):
+    if movement_type not in ("Entrada", *STOCK_DECREASING_MOVEMENT_TYPES):
         raise AppError("Selecciona un tipo de movimiento válido.")
     if not isinstance(lot_lines, list) or not lot_lines or len(lot_lines) > 10:
         raise AppError("Registra entre 1 y 10 lotes por operación.")
@@ -726,17 +731,17 @@ def add_movement_batch(
             raise AppError("Ese producto no existe o está desactivado.")
         if product_id not in stock:
             raise AppError("No se pudo calcular la existencia actual del producto.")
-        if movement_type == "Salida" and total_quantity > stock[product_id]:
+        if movement_type in STOCK_DECREASING_MOVEMENT_TYPES and total_quantity > stock[product_id]:
             raise AppError(
                 f"Existencia insuficiente: quedan {stock[product_id]} presentación(es) de {record_fields(product).get('Nombre', product_id)}."
             )
-        if movement_type == "Salida":
+        if movement_type in STOCK_DECREASING_MOVEMENT_TYPES:
             available_by_lot = stock_by_lot(movements, product_id)
             for line in normalized_lines:
                 available = available_by_lot.get(line["Lote"], 0)
                 if line["Cantidad"] > available:
                     raise AppError(
-                        f"El lote {line['Lote']} tiene {available} caja(s) disponible(s); no se puede registrar una salida de {line['Cantidad']}."
+                        f"El lote {line['Lote']} tiene {available} caja(s) disponible(s); no se puede registrar este movimiento de {line['Cantidad']}."
                     )
         fields = record_fields(product)
         price = fields.get("Precio")
@@ -1026,13 +1031,15 @@ def render_movement_form(
     default_quantity = proposed_quantity if isinstance(proposed_quantity, int) and proposed_quantity > 0 else 1
     proposed_lot = st.session_state.get("ocr_lot")
 
-    st.subheader("Registrar entrada o salida")
+    st.subheader("Registrar movimiento")
     st.caption(
         f"Hora actual de Perú: {peru_now():%d/%m/%Y %H:%M:%S}. "
         "La fecha y hora se guardan al confirmar el movimiento."
     )
     movement_type = st.selectbox(
-        "Movimiento", ("Entrada", "Salida"), key="movement_type"
+        "Movimiento",
+        ("Entrada", "Salida", "Consumo de tienda"),
+        key="movement_type",
     )
     product_id = st.selectbox(
         "Producto",
@@ -1042,10 +1049,10 @@ def render_movement_form(
         key="movement_product_id",
     )
     available_lots = stock_by_lot(movements, product_id)
-    if movement_type == "Salida" and not available_lots:
+    if movement_type in STOCK_DECREASING_MOVEMENT_TYPES and not available_lots:
         st.warning("No hay cajas disponibles de este producto en ningún lote.")
         return
-    if movement_type == "Salida":
+    if movement_type in STOCK_DECREASING_MOVEMENT_TYPES:
         default_lot = (
             proposed_lot.strip().upper()
             if isinstance(proposed_lot, str)
@@ -1083,7 +1090,7 @@ def render_movement_form(
                         options=lot_options,
                         required=True,
                     )
-                    if movement_type == "Salida"
+                    if movement_type in STOCK_DECREASING_MOVEMENT_TYPES
                     else st.column_config.TextColumn(
                         "Lote de fabricación",
                         help="Código de lote leído de la etiqueta o capturado manualmente.",
@@ -1105,10 +1112,14 @@ def render_movement_form(
             value=peru_now().date(),
         )
         note = st.text_input("Nota opcional", max_chars=160)
-        if movement_type == "Salida":
+        if movement_type in STOCK_DECREASING_MOVEMENT_TYPES:
             st.caption(
-                "Elige exactamente de qué lotes salen las cajas. "
-                "La existencia de cada lote se valida al guardar."
+                (
+                    "Elige exactamente de qué lotes salen las cajas."
+                    if movement_type == "Salida"
+                    else "Elige los lotes de las cajas consumidas por la tienda."
+                )
+                + " La existencia de cada lote se valida al guardar."
             )
         else:
             st.caption("Puedes añadir varias filas de lote; se guardarán juntas como una operación.")
@@ -1174,7 +1185,12 @@ def daily_report_message(
         for record in products
     }
     sections = [f"📦 Reporte diario — {report_date:%d/%m/%Y}"]
-    for movement_type, title in (("Entrada", "Entradas"), ("Salida", "Salidas")):
+    report_types = (
+        ("Entrada", "Entradas", True),
+        ("Salida", "Salidas", True),
+        ("Consumo de tienda", "Consumo de tienda", False),
+    )
+    for movement_type, title, has_value in report_types:
         totals: dict[tuple[str, str], int] = {}
         total_quantity = 0
         total_value = 0.0
@@ -1192,7 +1208,7 @@ def daily_report_message(
             key = (product_name, lot)
             totals[key] = totals.get(key, 0) + quantity
             total_quantity += quantity
-            if include_values:
+            if include_values and has_value:
                 price = fields.get("Precio unitario")
                 if isinstance(price, (int, float)) and not isinstance(price, bool):
                     total_value += price * quantity
@@ -1298,6 +1314,9 @@ def render_report(
     rows = movement_rows(movements, start, end)
     entries = [fields for _, _, fields in rows if fields.get("Tipo") == "Entrada"]
     exits = [fields for _, _, fields in rows if fields.get("Tipo") == "Salida"]
+    consumption = [
+        fields for _, _, fields in rows if fields.get("Tipo") == "Consumo de tienda"
+    ]
 
     def total_value(items: list[dict[str, Any]]) -> tuple[float, int]:
         total = 0.0
@@ -1316,11 +1335,14 @@ def render_report(
     entry_value, entry_without_price = total_value(entries)
     exit_value, exit_without_price = total_value(exits)
     st.caption(f"Semana del {start:%d/%m/%Y} al {end:%d/%m/%Y}")
-    columns = st.columns(4)
+    columns = st.columns(5)
     columns[0].metric("Entradas", sum(fields.get("Cantidad", 0) for fields in entries))
     columns[1].metric("Salidas", sum(fields.get("Cantidad", 0) for fields in exits))
-    columns[2].metric("Valor entradas", format_money(entry_value, currency))
-    columns[3].metric("Valor salidas", format_money(exit_value, currency))
+    columns[2].metric(
+        "Consumo de tienda", sum(fields.get("Cantidad", 0) for fields in consumption)
+    )
+    columns[3].metric("Valor entradas", format_money(entry_value, currency))
+    columns[4].metric("Valor salidas", format_money(exit_value, currency))
     if entry_without_price + exit_without_price:
         st.warning(f"{entry_without_price + exit_without_price} movimiento(s) no tienen precio guardado.")
     if not rows:
@@ -1334,7 +1356,8 @@ def render_report(
     display_rows = []
     export_rows = []
     for movement_date, _, fields in rows:
-        price = fields.get("Precio unitario")
+        is_consumption = fields.get("Tipo") == "Consumo de tienda"
+        price = None if is_consumption else fields.get("Precio unitario")
         quantity = fields.get("Cantidad")
         value = price * quantity if isinstance(price, (int, float)) else None
         product_id = str(fields.get("Producto ID", ""))
