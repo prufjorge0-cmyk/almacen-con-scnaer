@@ -686,7 +686,9 @@ def show_login(users: list[dict[str, Any]]) -> None:
                 st.session_state["login_locked_until"] = time.time() + 60
             st.error("Usuario o contraseña incorrectos, o la cuenta está desactivada.")
         else:
-            st.session_state["authenticated_username"] = record_fields(user)["Usuario"]
+            fields = record_fields(user)
+            st.session_state["authenticated_username"] = fields["Usuario"]
+            st.session_state["authenticated_password_hash"] = fields["Hash contraseña"]
             st.session_state["login_failures"] = 0
             st.session_state.pop("login_locked_until", None)
             st.rerun()
