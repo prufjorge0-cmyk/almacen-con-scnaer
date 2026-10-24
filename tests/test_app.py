@@ -191,6 +191,8 @@ class InventoryTests(unittest.TestCase):
             "barquimieles-360",
         )
         self.assertEqual(parse_product("Coronitas"), "coronitas")
+        self.assertEqual(parse_product("CORONlTAS"), "coronitas")
+        self.assertIsNone(parse_product("Coronario"))
         self.assertIsNone(parse_quantity("Barquimieles de 360 unidades"))
         self.assertIsNone(
             parse_quantity("PRODUCTO: BARQUIROLL PREMIUM CONTENIDO: 360 UND")

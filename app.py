@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import base64
+import difflib
 import hashlib
 import io
 import json
@@ -60,6 +61,12 @@ def normalize_text(value: str) -> str:
 def parse_product(text: str) -> str | None:
     normalized = normalize_text(text)
     if re.search(r"\bcoronitas?\b", normalized):
+        return "coronitas"
+    product_tokens = re.findall(r"\b[a-z0-9]{8,}\b", normalized)
+    if any(
+        difflib.SequenceMatcher(None, token, "coronitas").ratio() >= 0.82
+        for token in product_tokens
+    ):
         return "coronitas"
     if re.search(r"\bbarquiroll\b", normalized):
         return "barquimieles-360"
@@ -950,10 +957,22 @@ def render_photo_capture(products: list[dict[str, Any]]) -> None:
                             image = Image.open(io.BytesIO(image_bytes))
                             image = ImageOps.exif_transpose(image).convert("RGB")
                             detected_text = pytesseract.image_to_string(image, lang="spa")
+                            product_id = parse_product(detected_text)
                             st.session_state["ocr_text"] = detected_text
-                            st.session_state["ocr_product_id"] = parse_product(detected_text)
+                            st.session_state["ocr_product_id"] = product_id
                             st.session_state["ocr_quantity"] = parse_quantity(detected_text)
                             st.session_state["ocr_lot"] = parse_lot(detected_text)
+                            active_product_ids = {
+                                str(record_fields(record).get("ID", ""))
+                                for record in products
+                            }
+                            if product_id in active_product_ids:
+                                st.session_state["movement_product_id"] = product_id
+                            else:
+                                st.session_state.pop("movement_product_id", None)
+                            st.session_state["ocr_form_revision"] = (
+                                int(st.session_state.get("ocr_form_revision", 0)) + 1
+                            )
                             st.rerun()
                         except (
                             UnidentifiedImageError,
@@ -976,6 +995,10 @@ def clear_photo_proposal() -> None:
     st.session_state.pop("ocr_product_id", None)
     st.session_state.pop("ocr_quantity", None)
     st.session_state.pop("ocr_lot", None)
+    st.session_state.pop("movement_product_id", None)
+    st.session_state["ocr_form_revision"] = (
+        int(st.session_state.get("ocr_form_revision", 0)) + 1
+    )
 
 
 def render_movement_form(
@@ -1041,7 +1064,10 @@ def render_movement_form(
                 "Cantidad": default_quantity,
             }
         ]
-    editor_key = f"movement_lot_lines_{movement_type}_{product_id}"
+    editor_key = (
+        f"movement_lot_lines_{movement_type}_{product_id}_"
+        f"{st.session_state.get('ocr_form_revision', 0)}"
+    )
     with st.form("movement_form", clear_on_submit=True):
         lot_lines = st.data_editor(
             default_lot_lines,
