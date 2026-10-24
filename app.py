@@ -70,6 +70,15 @@ def parse_product(text: str) -> str | None:
     return None
 
 
+def parse_lot(text: str) -> str | None:
+    pattern = re.compile(
+        r"\b(?:lote|lot)\s*(?:(?:n(?:ro|umero|o)?\.?\s*(?:[°º#?]|(?=[:=]))|[°º#?])\s*)?[:=#-]?\s*([A-Z0-9][A-Z0-9./-]{0,29})\b",
+        re.IGNORECASE,
+    )
+    match = pattern.search(text)
+    return match.group(1).strip(" .-/").upper() if match else None
+
+
 def parse_quantity(text: str) -> int | None:
     normalized = normalize_text(text)
     normalized = re.sub(
@@ -92,6 +101,47 @@ def parse_quantity(text: str) -> int | None:
         if match:
             return int(match.group(1))
     return None
+
+
+def normalize_lot_lines(lines: Any) -> list[dict[str, Any]]:
+    if hasattr(lines, "to_dict"):
+        lines = lines.to_dict(orient="records")
+    if not isinstance(lines, (list, tuple)):
+        raise AppError("No se pudieron leer las filas de lote.")
+
+    normalized: list[dict[str, Any]] = []
+    for line in lines:
+        if not isinstance(line, dict):
+            raise AppError("Hay una fila de lote inválida.")
+        lot_value = line.get("Lote")
+        quantity_value = line.get("Cantidad")
+        lot_empty = lot_value is None or (
+            isinstance(lot_value, float) and math.isnan(lot_value)
+        ) or not str(lot_value).strip()
+        quantity_empty = quantity_value is None or (
+            isinstance(quantity_value, float) and math.isnan(quantity_value)
+        )
+        if lot_empty and quantity_empty:
+            continue
+        if isinstance(quantity_value, bool) or quantity_empty:
+            quantity = None
+        else:
+            try:
+                number = float(quantity_value)
+            except (TypeError, ValueError, OverflowError):
+                raise AppError("Cada lote debe tener una cantidad entera mayor que cero.")
+            if not math.isfinite(number) or not number.is_integer():
+                raise AppError("La cantidad por lote debe ser un número entero.")
+            quantity = int(number)
+        normalized.append(
+            {
+                "Lote": "" if lot_empty else str(lot_value).strip(),
+                "Cantidad": quantity,
+            }
+        )
+    if len(normalized) > 10:
+        raise AppError("Registra como máximo 10 lotes por operación.")
+    return normalized
 
 
 def monday_of(value: date) -> date:
@@ -580,15 +630,54 @@ def add_movement(
     movement_date: date,
     note: str,
     username: str,
+    lot: str = "SIN LOTE",
+) -> None:
+    add_movement_batch(
+        client,
+        movement_type=movement_type,
+        product_id=product_id,
+        lot_lines=[{"Lote": lot, "Cantidad": quantity}],
+        movement_date=movement_date,
+        note=note,
+        username=username,
+    )
+
+
+def add_movement_batch(
+    client: AirtableClient,
+    *,
+    movement_type: str,
+    product_id: str,
+    lot_lines: list[dict[str, Any]],
+    movement_date: date,
+    note: str,
+    username: str,
 ) -> None:
     if movement_type not in ("Entrada", "Salida"):
         raise AppError("Selecciona un tipo de movimiento válido.")
-    if isinstance(quantity, bool) or not isinstance(quantity, int) or quantity < 1:
-        raise AppError("La cantidad debe ser un número entero mayor que cero.")
+    if not isinstance(lot_lines, list) or not lot_lines or len(lot_lines) > 10:
+        raise AppError("Registra entre 1 y 10 lotes por operación.")
     if len(note) > 160:
         raise AppError("La nota no puede superar 160 caracteres.")
     if not isinstance(movement_date, date):
         raise AppError("La fecha del movimiento no es válida.")
+    normalized_lines: list[dict[str, Any]] = []
+    total_quantity = 0
+    for line in lot_lines:
+        if not isinstance(line, dict):
+            raise AppError("Hay una fila de lote inválida.")
+        lot = line.get("Lote")
+        quantity = line.get("Cantidad")
+        if not isinstance(lot, str) or not lot.strip() or len(lot.strip()) > 40:
+            raise AppError("Cada fila debe tener un lote de entre 1 y 40 caracteres.")
+        if (
+            isinstance(quantity, bool)
+            or not isinstance(quantity, int)
+            or quantity < 1
+        ):
+            raise AppError("Cada lote debe tener una cantidad entera mayor que cero.")
+        normalized_lines.append({"Lote": lot.strip(), "Cantidad": quantity})
+        total_quantity += quantity
 
     with MOVEMENT_LOCK:
         products = get_products(client)
@@ -607,7 +696,7 @@ def add_movement(
             raise AppError("Ese producto no existe o está desactivado.")
         if product_id not in stock:
             raise AppError("No se pudo calcular la existencia actual del producto.")
-        if movement_type == "Salida" and quantity > stock[product_id]:
+        if movement_type == "Salida" and total_quantity > stock[product_id]:
             raise AppError(
                 f"Existencia insuficiente: quedan {stock[product_id]} presentación(es) de {record_fields(product).get('Nombre', product_id)}."
             )
@@ -620,19 +709,26 @@ def add_movement(
             or price < 0
         ):
             raise AppError("El precio configurado en Airtable no es válido.")
-        client.create_record(
+        group_id = str(uuid.uuid4())
+        timestamp = movement_timestamp(movement_date)
+        client.create_records(
             MOVEMENT_TABLE,
-            {
-                "ID": str(uuid.uuid4()),
-                "Tipo": movement_type,
-                "Producto ID": product_id,
-                "Producto": str(fields.get("Nombre", product_id)),
-                "Cantidad": quantity,
-                "Fecha": movement_timestamp(movement_date),
-                "Precio unitario": price,
-                "Nota": note.strip(),
-                "Registrado por": username,
-            },
+            [
+                {
+                    "ID": str(uuid.uuid4()),
+                    "Grupo ID": group_id,
+                    "Lote": line["Lote"],
+                    "Tipo": movement_type,
+                    "Producto ID": product_id,
+                    "Producto": str(fields.get("Nombre", product_id)),
+                    "Cantidad": line["Cantidad"],
+                    "Fecha": timestamp,
+                    "Precio unitario": price,
+                    "Nota": note.strip(),
+                    "Registrado por": username,
+                }
+                for line in normalized_lines
+            ],
         )
 
 
@@ -765,6 +861,7 @@ def render_photo_capture(products: list[dict[str, Any]]) -> None:
         if detected_text is not None:
             product_id = st.session_state.get("ocr_product_id")
             quantity = st.session_state.get("ocr_quantity")
+            lot = st.session_state.get("ocr_lot")
             st.text_area("Texto reconocido (revísalo)", detected_text, height=100, disabled=True)
             st.button(
                 "Elegir otra foto",
@@ -785,6 +882,8 @@ def render_photo_capture(products: list[dict[str, Any]]) -> None:
                     suggestions.append(str(record_fields(product).get("Nombre", product_id)))
             if quantity:
                 suggestions.append(f"cantidad {quantity}")
+            if lot:
+                suggestions.append(f"lote {lot}")
             if suggestions:
                 st.info("Propuesta del OCR: " + " · ".join(suggestions) + ". Confirma los campos en el formulario antes de guardar.")
             else:
@@ -810,6 +909,7 @@ def render_photo_capture(products: list[dict[str, Any]]) -> None:
                             st.session_state["ocr_text"] = detected_text
                             st.session_state["ocr_product_id"] = parse_product(detected_text)
                             st.session_state["ocr_quantity"] = parse_quantity(detected_text)
+                            st.session_state["ocr_lot"] = parse_lot(detected_text)
                             st.rerun()
                         except (
                             UnidentifiedImageError,
@@ -831,6 +931,7 @@ def clear_photo_proposal() -> None:
     st.session_state.pop("ocr_text", None)
     st.session_state.pop("ocr_product_id", None)
     st.session_state.pop("ocr_quantity", None)
+    st.session_state.pop("ocr_lot", None)
 
 
 def render_movement_form(
@@ -856,6 +957,13 @@ def render_movement_form(
     product_index = product_ids.index(proposed_product) if proposed_product in product_ids else 0
     proposed_quantity = st.session_state.get("ocr_quantity")
     default_quantity = proposed_quantity if isinstance(proposed_quantity, int) and proposed_quantity > 0 else 1
+    proposed_lot = st.session_state.get("ocr_lot")
+    default_lot_lines = [
+        {
+            "Lote": proposed_lot if isinstance(proposed_lot, str) else "",
+            "Cantidad": default_quantity,
+        }
+    ]
 
     st.subheader("Registrar entrada o salida")
     st.caption(
@@ -870,34 +978,64 @@ def render_movement_form(
             index=product_index,
             format_func=lambda value: str(record_fields(by_id[value]).get("Nombre", value)),
         )
-        quantity = st.number_input("Cantidad de presentaciones", min_value=1, step=1, value=default_quantity)
+        lot_lines = st.data_editor(
+            default_lot_lines,
+            num_rows="dynamic",
+            use_container_width=True,
+            hide_index=True,
+            key="movement_lot_lines",
+            column_config={
+                "Lote": st.column_config.TextColumn(
+                    "Lote de fabricación",
+                    help="Código de lote leído de la etiqueta o capturado manualmente.",
+                    required=True,
+                    max_chars=40,
+                ),
+                "Cantidad": st.column_config.NumberColumn(
+                    "Cantidad de cajas",
+                    min_value=1,
+                    step=1,
+                    format="%d",
+                    required=True,
+                ),
+            },
+        )
         movement_date = st.date_input(
             "Fecha del movimiento (hora de Perú al guardar)",
             value=peru_now().date(),
         )
         note = st.text_input("Nota opcional", max_chars=160)
-        confirmed = st.checkbox("Confirmo que revisé el tipo, producto, cantidad y fecha.")
+        st.caption("Puedes añadir varias filas de lote; se guardarán juntas como una operación.")
+        confirmed = st.checkbox("Confirmo que revisé el tipo, producto, lotes, cantidades y fecha.")
         submitted = st.form_submit_button("Guardar movimiento", type="primary")
     if submitted:
         if not confirmed:
             st.error("Marca la confirmación antes de guardar.")
-        elif movement_type == "Salida" and int(quantity) > stock.get(product_id, 0):
-            st.error(
-                f"Existencia insuficiente: quedan {stock.get(product_id, 0)} presentación(es) de {record_fields(by_id[product_id]).get('Nombre', product_id)}."
-            )
         else:
             try:
-                add_movement(
+                normalized_lines = normalize_lot_lines(lot_lines)
+                total_quantity = sum(
+                    int(line["Cantidad"])
+                    for line in normalized_lines
+                    if isinstance(line.get("Cantidad"), (int, float))
+                    and not isinstance(line.get("Cantidad"), bool)
+                )
+                if movement_type == "Salida" and total_quantity > stock.get(product_id, 0):
+                    raise AppError(
+                        f"Existencia insuficiente: quedan {stock.get(product_id, 0)} presentación(es) de {record_fields(by_id[product_id]).get('Nombre', product_id)}."
+                    )
+                add_movement_batch(
                     client,
                     movement_type=movement_type,
                     product_id=product_id,
-                    quantity=int(quantity),
+                    lot_lines=normalized_lines,
                     movement_date=movement_date,
                     note=note,
                     username=username,
                 )
                 st.session_state.pop("ocr_product_id", None)
                 st.session_state.pop("ocr_quantity", None)
+                st.session_state.pop("ocr_lot", None)
                 st.session_state.pop("ocr_text", None)
                 st.success("Movimiento guardado en Airtable.")
                 st.rerun()
@@ -974,6 +1112,8 @@ def render_report(
             {
                 "Fecha": movement_date.strftime("%d/%m/%Y"),
                 "Hora (Perú)": format_time(fields.get("Fecha")),
+                "Lote": fields.get("Lote", ""),
+                "Grupo de operación": fields.get("Grupo ID", ""),
                 "Movimiento": fields.get("Tipo", ""),
                 "Producto": name,
                 "Cantidad": quantity,
@@ -987,6 +1127,8 @@ def render_report(
             {
                 "Fecha": movement_date.isoformat(),
                 "Hora (Perú)": format_time(fields.get("Fecha")),
+                "Lote": fields.get("Lote", ""),
+                "Grupo de operación": fields.get("Grupo ID", ""),
                 "Movimiento": fields.get("Tipo", ""),
                 "Producto": name,
                 "Cantidad": quantity,
