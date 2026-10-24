@@ -10,6 +10,7 @@ Aplicación con Streamlit y Airtable para que trabajadores registren entradas y 
 - Mantén la base de Airtable privada y limita el acceso directo a sus colaboradores administradores. Los trabajadores deben entrar por la app, no como colaboradores de la base.
 - Los movimientos conservan el precio vigente al registrarse. Las salidas se vuelven a comprobar contra el inventario de Airtable antes de escribir.
 - La fecha predeterminada, la hora de cada movimiento, los reportes y el nombre/fecha del respaldo usan la zona `America/Lima`. Airtable guarda fecha y hora en el campo de texto `Fecha`; los movimientos históricos que solo tengan fecha siguen siendo compatibles.
+- En cada operación puedes registrar hasta 10 lotes, cada uno con su cantidad de cajas; todas las filas comparten un identificador de grupo para consultar la operación completa. Los campos `Lote` y `Grupo ID` deben existir en `Movimientos`.
 - Airtable no ofrece transacciones para esta API. La app serializa las escrituras de inventario dentro del proceso de Streamlit, pero una instalación con varias réplicas independientes no puede garantizar una reserva de stock atómica. Para una operación con múltiples servidores o muchas ventas simultáneas se requiere una base transaccional como backend.
 - La foto se sube al servidor de Streamlit para procesarse con Tesseract en español; no se guarda en Airtable y se retira del estado de captura tras leerla. El OCR solo propone producto/cantidad; un trabajador debe revisar y confirmar el formulario.
 - Los registros no se cargan hasta configurar Airtable y publicar la aplicación. La app anterior guardaba datos únicamente en el navegador; esos registros no se transfieren automáticamente.
@@ -36,6 +37,8 @@ Crea una base y tres tablas con estos nombres y campos. Los nombres de campo deb
 | `Producto ID` | Texto de una línea |
 | `Producto` | Texto de una línea |
 | `Cantidad` | Número entero |
+| `Lote` | Texto de una línea |
+| `Grupo ID` | Texto de una línea |
 | `Fecha` | Texto de una línea; la app guarda fecha y hora ISO 8601 de Perú (`America/Lima`, UTC-05:00) |
 | `Precio unitario` | Moneda o número, con hasta dos decimales |
 | `Nota` | Texto de una línea |
@@ -85,10 +88,10 @@ Si pierdes el acceso de administrador, configura un usuario y una contraseña te
 
 ## Uso y respaldos
 
-- El panel de trabajadores sirve para consultar cantidades y registrar entradas/salidas manualmente o desde una propuesta de foto.
+- El panel de trabajadores sirve para consultar cantidades y registrar entradas/salidas manualmente o desde una propuesta de foto. Cada fila debe incluir el código de lote y su cantidad; una operación puede contener varios lotes.
 - El administrador configura precios y catálogo, consulta el reporte de cada semana y descarga CSV.
 - **Airtable y respaldos** permite descargar un JSON con los datos actuales. La app no elimina movimientos; desactiva productos o personas para conservar el historial.
-- El OCR requiere `tesseract-ocr` y el idioma `spa`. Reconoce texto impreso como `Barquimieles` o el alias confirmado `Barquiroll Premium`; `Contenido: 360 UND` identifica la presentación, no el número de presentaciones en inventario. La cantidad del movimiento debe aparecer indicada por separado; si no se reconoce, complétala en el formulario. La calidad depende de iluminación, nitidez y texto legible; siempre revisa y confirma la propuesta.
+- El OCR requiere `tesseract-ocr` y el idioma `spa`. Reconoce texto impreso como `Barquimieles` o el alias confirmado `Barquiroll Premium`, y propone el código cuando aparece junto a `Lote`. `Contenido: 360 UND` identifica la presentación, no el número de presentaciones en inventario. La cantidad del movimiento debe aparecer indicada por separado; si no se reconoce, complétala en la tabla de lotes. La calidad depende de iluminación, nitidez y texto legible; siempre revisa y confirma la propuesta.
 - El formato monetario predeterminado es MXN; se puede cambiar `app.currency` en los secretos.
 
 ## Migrar registros de la app local anterior
