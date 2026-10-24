@@ -75,8 +75,21 @@ class InventoryTests(unittest.TestCase):
     def test_parse_product_and_quantity_without_misreading_package_size(self):
         self.assertEqual(parse_product("Barquimieles de 360 unidades"), "barquimieles-360")
         self.assertEqual(parse_product("Barquimieles de 12 unidades"), "barquimieles-12")
+        self.assertEqual(
+            parse_product("PRODUCTO: BARQUIROLL PREMIUM CONTENIDO: 360 UND"),
+            "barquimieles-360",
+        )
         self.assertEqual(parse_product("Coronitas"), "coronitas")
         self.assertIsNone(parse_quantity("Barquimieles de 360 unidades"))
+        self.assertIsNone(
+            parse_quantity("PRODUCTO: BARQUIROLL PREMIUM CONTENIDO: 360 UND")
+        )
+        self.assertEqual(
+            parse_quantity(
+                "PRODUCTO: BARQUIROLL PREMIUM CONTENIDO: 360 UND CANTIDAD: 4 cajas"
+            ),
+            4,
+        )
         self.assertEqual(parse_quantity("Barquimieles de 360 unidades cantidad: 4"), 4)
         self.assertEqual(parse_quantity("3 cajas de Coronitas"), 3)
 
