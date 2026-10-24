@@ -81,6 +81,8 @@ Streamlit Community Cloud despliega desde un repositorio GitHub. Sube estos arch
 
 Al abrir por primera vez, la app crea la cuenta administradora con las credenciales temporales del secreto. Inicia sesión y cámbiala desde **Cambiar mi contraseña**; luego elimina `bootstrap_admin_username` y `bootstrap_admin_password` de los secretos y vuelve a iniciar la app. En **Usuarios**, asigna a cada trabajador un nombre de usuario y una contraseña inicial de al menos 12 caracteres; comunícaselos de forma privada. Cada trabajador puede cambiar su propia contraseña. Desactiva su acceso desde el mismo panel cuando ya no trabaje contigo.
 
+Si pierdes el acceso de administrador, configura un usuario y una contraseña temporal nuevos en `app.bootstrap_admin_username` y `app.bootstrap_admin_password`, y activa `app.reset_admin_password = true` en Secrets. La app cambiará únicamente el hash de la cuenta administradora cuyo usuario coincida. Después, desactiva `app.reset_admin_password` en Secrets antes de iniciar sesión y cambiar la contraseña; mientras esté activo, la contraseña temporal seguirá teniendo prioridad. Si la cuenta está desactivada, primero reactívala en Airtable.
+
 ## Uso y respaldos
 
 - El panel de trabajadores sirve para consultar cantidades y registrar entradas/salidas manualmente o desde una propuesta de foto.

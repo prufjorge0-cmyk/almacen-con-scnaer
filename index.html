@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Migrar registro local</title>
+  <style>
+    body { max-width: 680px; margin: 10vh auto; padding: 24px; color: #25271f; background: #f8f5ef; font: 16px/1.6 system-ui, sans-serif; }
+    main { padding: 28px; border: 1px solid #e7e5dc; border-radius: 14px; background: #fffefa; }
+    h1 { line-height: 1.15; }
+    .warning { padding: 13px; border-radius: 9px; background: #fff4d8; }
+    button { padding: 11px 16px; border: 0; border-radius: 8px; color: white; background: #35684d; font: inherit; font-weight: 700; cursor: pointer; }
+    #status { margin-top: 12px; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Registro local anterior</h1>
+    <p class="warning"><strong>Esta versión local no tiene cuentas ni permisos.</strong> La app compartida ahora se ejecuta con Streamlit y Airtable. No uses el registro local para movimientos nuevos.</p>
+    <p>Si ya guardaste movimientos en este navegador, descarga aquí una copia para importarla en la app nueva desde <strong>Airtable y respaldos</strong>.</p>
+    <button id="download" type="button">Descargar respaldo local</button>
+    <p id="status" role="status"></p>
+  </main>
+  <script>
+    "use strict";
+    document.getElementById("download").addEventListener("click", () => {
+      const status = document.getElementById("status");
+      try {
+        const saved = localStorage.getItem("registro-barquillos-v1");
+        if (saved === null) {
+          status.textContent = "No hay registros locales en este navegador y ruta.";
+          return;
+        }
+        const payload = JSON.parse(saved);
+        const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = `respaldo-inventario-${new Date().toISOString().slice(0, 10)}.json`;
+        link.click();
+        window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+        status.textContent = "Respaldo descargado. Impórtalo en la app de Streamlit.";
+      } catch (error) {
+        status.textContent = `No se pudo leer el almacenamiento local: ${error.message}`;
+      }
+    });
+  </script>
+</body>
+</html>
