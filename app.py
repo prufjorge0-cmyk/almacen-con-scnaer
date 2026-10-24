@@ -60,6 +60,8 @@ def parse_product(text: str) -> str | None:
     normalized = normalize_text(text)
     if re.search(r"\bcoronitas?\b", normalized):
         return "coronitas"
+    if re.search(r"\bbarquiroll\b", normalized):
+        return "barquimieles-360"
     if re.search(r"barquimiel(?:es)?", normalized):
         if re.search(r"\b360\b", normalized):
             return "barquimieles-360"
@@ -72,6 +74,11 @@ def parse_quantity(text: str) -> int | None:
     normalized = normalize_text(text)
     normalized = re.sub(
         r"barquimiel(?:es)?\s*(?:de\s*)?(?:360|12)\s*unidades?",
+        " ",
+        normalized,
+    )
+    normalized = re.sub(
+        r"\bcontenido\s*[:=-]?\s*\d{1,6}\s*(?:und(?:s)?|unidades?)\b",
         " ",
         normalized,
     )
@@ -781,7 +788,9 @@ def render_photo_capture(products: list[dict[str, Any]]) -> None:
             if suggestions:
                 st.info("Propuesta del OCR: " + " · ".join(suggestions) + ". Confirma los campos en el formulario antes de guardar.")
             else:
-                st.warning("No se pudo identificar producto o cantidad; captura los datos manualmente.")
+                st.warning(
+                    "No se pudo reconocer producto ni cantidad. Completa ambos en el formulario de registro que aparece abajo."
+                )
         else:
             uploaded = st.file_uploader(
                 "Selecciona una foto clara del producto y la cantidad",
