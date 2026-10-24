@@ -471,6 +471,39 @@ def bootstrap_first_admin(
     return client.list_records(USER_TABLE)
 
 
+def reset_admin_password(
+    client: AirtableClient,
+    users: list[dict[str, Any]],
+    username: str,
+    password: str,
+) -> list[dict[str, Any]]:
+    normalized = validate_username(username)
+    matches = [
+        record
+        for record in users
+        if normalize_username(str(record_fields(record).get("Usuario", "")))
+        == normalized
+        and record_fields(record).get("Rol") == "admin"
+    ]
+    if len(matches) != 1:
+        raise AppError(
+            "No se encontró una única cuenta administradora activa con el usuario configurado para recuperación."
+        )
+    user = matches[0]
+    if record_fields(user).get("Activo") is not True:
+        raise AppError(
+            "La cuenta administradora está desactivada. Reactívala en Airtable antes de restablecer su contraseña."
+        )
+    if not verify_password(password, record_fields(user).get("Hash contraseña")):
+        client.update_record(
+            USER_TABLE,
+            str(user.get("id", "")),
+            {"Hash contraseña": hash_password(password)},
+        )
+        return client.list_records(USER_TABLE)
+    return users
+
+
 def has_admin_account(users: list[dict[str, Any]]) -> bool:
     return any(
         fields.get("Rol") == "admin"
@@ -613,9 +646,16 @@ def read_settings() -> tuple[dict[str, Any], dict[str, Any]]:
         raise AppError("Configura airtable.token y airtable.base_id en los secretos de Streamlit.")
     bootstrap_username = str(app_settings.get("bootstrap_admin_username", "")).strip()
     bootstrap_password = str(app_settings.get("bootstrap_admin_password", ""))
+    reset_admin = app_settings.get("reset_admin_password", False)
+    if not isinstance(reset_admin, bool):
+        raise AppError("app.reset_admin_password debe ser true o false.")
     if bool(bootstrap_username) != bool(bootstrap_password):
         raise AppError(
             "Configura juntos bootstrap_admin_username y bootstrap_admin_password, o elimina ambos después de crear el primer administrador."
+        )
+    if reset_admin and not bootstrap_username:
+        raise AppError(
+            "Para restablecer la cuenta, configura también bootstrap_admin_username y bootstrap_admin_password."
         )
     if bootstrap_username:
         validate_username(bootstrap_username)
@@ -1265,9 +1305,13 @@ def run_app() -> None:
     )
     try:
         users = client.list_records(USER_TABLE)
-        if not has_admin_account(users):
-            bootstrap_username = str(app_settings.get("bootstrap_admin_username", "")).strip()
-            bootstrap_password = str(app_settings.get("bootstrap_admin_password", ""))
+        bootstrap_username = str(app_settings.get("bootstrap_admin_username", "")).strip()
+        bootstrap_password = str(app_settings.get("bootstrap_admin_password", ""))
+        if app_settings.get("reset_admin_password") and has_admin_account(users):
+            users = reset_admin_password(
+                client, users, bootstrap_username, bootstrap_password
+            )
+        elif not has_admin_account(users):
             if not bootstrap_username or not bootstrap_password:
                 st.error(
                     "Aún no hay una cuenta de administrador con usuario y contraseña. Configura bootstrap_admin_username y bootstrap_admin_password en los secretos del servidor; después de iniciar sesión, cámbiala y retira ambas credenciales temporales."
@@ -1279,6 +1323,10 @@ def run_app() -> None:
     except AppError as error:
         st.error(str(error))
         st.stop()
+    if app_settings.get("reset_admin_password"):
+        st.warning(
+            "Restablecimiento listo. Desactiva app.reset_admin_password en Secrets antes de iniciar sesión y cambiar la contraseña."
+        )
 
     username = str(st.session_state.get("authenticated_username", ""))
     current_user = find_user(username, users) if username else None
