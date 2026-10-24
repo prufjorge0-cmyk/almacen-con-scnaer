@@ -275,19 +275,20 @@ class InventoryTests(unittest.TestCase):
         self.assertFalse(verify_password("wrong password", first_hash))
 
     def test_password_and_username_require_safe_lengths_and_format(self):
-        with self.assertRaisesRegex(AppError, "12 caracteres"):
-            hash_password("too-short")
+        self.assertTrue(verify_password("pass1234", hash_password("pass1234")))
+        with self.assertRaisesRegex(AppError, "8 caracteres"):
+            hash_password("1234567")
         with self.assertRaisesRegex(AppError, "usuario debe tener"):
             validate_username("x")
 
     def test_authentication_uses_active_role_and_unique_username(self):
-        password_hash = hash_password("worker password 123")
+        password_hash = hash_password("worker123")
         users = [
             record("u1", {"Usuario": "worker", "Hash contraseña": password_hash, "Rol": "trabajador", "Activo": True}),
             record("u2", {"Usuario": "off", "Hash contraseña": password_hash, "Rol": "trabajador", "Activo": False}),
         ]
-        self.assertEqual(authenticate_user("WORKER", "worker password 123", users), users[0])
-        self.assertIsNone(authenticate_user("off", "worker password 123", users))
+        self.assertEqual(authenticate_user("WORKER", "worker123", users), users[0])
+        self.assertIsNone(authenticate_user("off", "worker123", users))
         self.assertIsNone(authenticate_user("worker", "wrong", users))
         duplicate_access = users + [
             record("u3", {"Usuario": "worker", "Hash contraseña": password_hash, "Rol": "admin", "Activo": True})
