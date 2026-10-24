@@ -16,6 +16,7 @@ from app import (
     normalize_lot_lines,
     peru_now,
     reset_admin_password,
+    stock_by_lot,
     stock_by_product,
     validate_legacy_backup,
     validate_username,
@@ -131,6 +132,20 @@ class InventoryTests(unittest.TestCase):
             {"barquimieles-360": 3, "coronitas": 7},
         )
 
+    def test_lot_stock_is_derived_separately_and_legacy_moves_are_grouped(self):
+        movements = [
+            record("m1", {"Producto ID": "barquimieles-360", "Tipo": "Entrada", "Cantidad": 5, "Lote": "a-01"}),
+            record("m2", {"Producto ID": "barquimieles-360", "Tipo": "Salida", "Cantidad": 2, "Lote": "A-01"}),
+            record("m3", {"Producto ID": "barquimieles-360", "Tipo": "Entrada", "Cantidad": 3, "Lote": "B-02"}),
+            record("m4", {"Producto ID": "coronitas", "Tipo": "Entrada", "Cantidad": 7, "Lote": "C-03"}),
+            record("m5", {"Producto ID": "barquimieles-12", "Tipo": "Entrada", "Cantidad": 2}),
+            record("m6", {"Producto ID": "barquimieles-360", "Tipo": "Entrada", "Cantidad": 2}),
+        ]
+        self.assertEqual(
+            stock_by_lot(movements, "barquimieles-360"),
+            {"A-01": 3, "B-02": 3, "SIN LOTE": 2},
+        )
+
     def test_rejects_sale_beyond_fresh_airtable_stock(self):
         product = record(
             "p1",
@@ -225,6 +240,32 @@ class InventoryTests(unittest.TestCase):
                 username="worker",
             )
         self.assertEqual(len(client.movements), 1)
+
+    def test_multi_lot_exit_cannot_take_more_than_selected_lot_stock(self):
+        product = record(
+            "p1",
+            {"ID": "barquimieles-360", "Nombre": "Barquimieles", "Precio": 9, "Activo": True},
+        )
+        client = FakeAirtableClient(
+            [product],
+            [
+                record("m1", {"ID": "m1", "Producto ID": "barquimieles-360", "Tipo": "Entrada", "Cantidad": 2, "Fecha": "2026-10-24", "Lote": "A-01"}),
+                record("m2", {"ID": "m2", "Producto ID": "barquimieles-360", "Tipo": "Entrada", "Cantidad": 5, "Fecha": "2026-10-24", "Lote": "B-02"}),
+            ],
+        )
+        from app import add_movement_batch
+
+        with self.assertRaisesRegex(AppError, "lote A-01 tiene 2 caja"):
+            add_movement_batch(
+                client,
+                movement_type="Salida",
+                product_id="barquimieles-360",
+                lot_lines=[{"Lote": "A-01", "Cantidad": 3}],
+                movement_date=date(2026, 10, 24),
+                note="",
+                username="worker",
+            )
+        self.assertEqual(len(client.movements), 2)
 
     def test_passwords_are_salted_hashed_and_verified(self):
         first_hash = hash_password("correct horse battery staple")
