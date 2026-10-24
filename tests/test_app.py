@@ -15,6 +15,7 @@ from app import (
     parse_lot,
     parse_quantity,
     normalize_lot_lines,
+    normalize_whatsapp_phone,
     peru_now,
     reset_admin_password,
     stock_by_lot,
@@ -139,6 +140,42 @@ class InventoryTests(unittest.TestCase):
         self.assertTrue(url.startswith("https://wa.me/?text="))
         self.assertIn("%C3%BA", url)
         self.assertIn("%20", url)
+
+    def test_worker_daily_report_omits_prices_and_targets_admin_number(self):
+        movements = [
+            record(
+                "m1",
+                {
+                    "ID": "m1",
+                    "Tipo": "Entrada",
+                    "Producto ID": "barquimieles-360",
+                    "Cantidad": 2,
+                    "Lote": "A-01",
+                    "Fecha": "2026-10-24T08:00:00-05:00",
+                    "Precio unitario": 99,
+                },
+            )
+        ]
+        message = daily_report_message(
+            movements,
+            [],
+            date(2026, 10, 24),
+            "PEN",
+            include_values=False,
+        )
+        url = whatsapp_share_url(message, "+51 987-654-321")
+
+        self.assertIn("Entradas: 2 caja(s)", message)
+        self.assertIn("Lote A-01", message)
+        self.assertNotIn("99", message)
+        self.assertTrue(url.startswith("https://wa.me/51987654321?text="))
+
+    def test_whatsapp_phone_requires_an_international_number(self):
+        self.assertEqual(normalize_whatsapp_phone("+51 (987) 654-321"), "51987654321")
+        with self.assertRaises(AppError):
+            normalize_whatsapp_phone("1234")
+        with self.assertRaises(AppError):
+            normalize_whatsapp_phone("51-12-34")
 
     def test_peru_timezone_is_used_for_current_time_and_movement_time(self):
         now = peru_now()

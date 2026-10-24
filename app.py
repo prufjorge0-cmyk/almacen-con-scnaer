@@ -1138,6 +1138,7 @@ def daily_report_message(
     products: list[dict[str, Any]],
     report_date: date,
     currency: str,
+    include_values: bool = True,
 ) -> str:
     rows = movement_rows(movements, report_date, report_date)
     names = {
@@ -1165,22 +1166,23 @@ def daily_report_message(
             key = (product_name, lot)
             totals[key] = totals.get(key, 0) + quantity
             total_quantity += quantity
-            price = fields.get("Precio unitario")
-            if isinstance(price, (int, float)) and not isinstance(price, bool):
-                total_value += price * quantity
-                priced_quantity += quantity
-            else:
-                unpriced_movements += 1
+            if include_values:
+                price = fields.get("Precio unitario")
+                if isinstance(price, (int, float)) and not isinstance(price, bool):
+                    total_value += price * quantity
+                    priced_quantity += quantity
+                else:
+                    unpriced_movements += 1
 
         sections.append(f"\n{title}: {total_quantity} caja(s)")
         for (product_name, lot), quantity in sorted(totals.items()):
             sections.append(f"• {product_name} | Lote {lot}: {quantity} caja(s)")
-        if priced_quantity:
+        if include_values and priced_quantity:
             label = "Valor registrado"
             if unpriced_movements:
                 label = "Valor parcial (hay movimientos sin precio)"
             sections.append(f"{label}: {format_money(total_value, currency)}")
-        elif unpriced_movements:
+        elif include_values and unpriced_movements:
             sections.append("Valor: sin precios configurados")
 
     if not rows:
@@ -1189,8 +1191,57 @@ def daily_report_message(
     return "\n".join(sections)
 
 
-def whatsapp_share_url(message: str) -> str:
-    return f"https://wa.me/?text={quote(message, safe='')}"
+def normalize_whatsapp_phone(phone: str) -> str:
+    value = phone.strip()
+    if not value or not re.fullmatch(r"\+?[\d\s().-]+", value):
+        raise AppError(
+            "Configura app.whatsapp_admin_phone con el número internacional, por ejemplo 51987654321."
+        )
+    digits = re.sub(r"\D", "", value)
+    if not 8 <= len(digits) <= 15 or digits.startswith("0"):
+        raise AppError(
+            "El número de WhatsApp debe incluir el código de país y tener entre 8 y 15 dígitos."
+        )
+    return digits
+
+
+def whatsapp_share_url(message: str, phone: str | None = None) -> str:
+    recipient = normalize_whatsapp_phone(phone) if phone is not None else ""
+    return f"https://wa.me/{recipient}?text={quote(message, safe='')}"
+
+
+def render_worker_daily_share(
+    movements: list[dict[str, Any]],
+    products: list[dict[str, Any]],
+    app_settings: dict[str, Any],
+    currency: str,
+) -> None:
+    st.subheader("Enviar reporte diario al administrador")
+    daily_date = st.date_input(
+        "Día del reporte",
+        value=peru_now().date(),
+        key="worker_daily_report_date",
+    )
+    phone = str(app_settings.get("whatsapp_admin_phone", ""))
+    try:
+        recipient = normalize_whatsapp_phone(phone)
+    except AppError as error:
+        st.warning(
+            f"{error} El administrador debe agregar este valor en los secretos de Streamlit."
+        )
+        return
+
+    message = daily_report_message(
+        movements, products, daily_date, currency, include_values=False
+    )
+    st.link_button(
+        "Enviar reporte diario por WhatsApp",
+        whatsapp_share_url(message, recipient),
+        type="primary",
+    )
+    st.caption(
+        "Se abrirá el chat del administrador con el reporte listo. Revisa el mensaje y pulsa Enviar; no se envía automáticamente."
+    )
 
 
 def render_report(
@@ -1706,6 +1757,9 @@ def run_app() -> None:
                 users,
                 str(airtable_settings["base_id"]),
             )
+    else:
+        st.divider()
+        render_worker_daily_share(movements, products, app_settings, currency)
     st.caption(
         "Las fotos del OCR se procesan temporalmente en Streamlit; los datos de inventario se guardan en Airtable."
     )

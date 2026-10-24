@@ -4,7 +4,7 @@ Aplicación con Streamlit y Airtable para que trabajadores registren entradas y 
 
 ## Seguridad y alcance
 
-- Los trabajadores inician sesión con una cuenta individual autorizada, ven existencias y registran movimientos. No ven precios, reportes, administración ni respaldos.
+- Los trabajadores inician sesión con una cuenta individual autorizada, ven existencias y registran movimientos. No ven precios, reportes semanales, administración ni respaldos. Pueden enviar al administrador un resumen diario de cantidades y lotes por WhatsApp, sin mostrar precios.
 - El administrador inicial configura `app.bootstrap_admin_username` y `app.bootstrap_admin_password` en secretos del servidor. Después puede mantener productos y precios, autorizar/desactivar trabajadores, restablecerles contraseñas, consultar reportes semanales y descargar un respaldo.
 - La app comprueba el usuario, el hash de contraseña, su rol y si la cuenta sigue activa. Las contraseñas requieren al menos 8 caracteres y se guardan como hashes PBKDF2 con sal. Los intentos fallidos se limitan temporalmente por sesión; cambiar o restablecer la contraseña invalida las sesiones anteriores. El token personal de Airtable nunca se entrega al navegador.
 - Mantén la base de Airtable privada y limita el acceso directo a sus colaboradores administradores. Los trabajadores deben entrar por la app, no como colaboradores de la base.
@@ -72,7 +72,7 @@ python -m pip install -r requirements.txt
 Copy-Item .streamlit\secrets.toml.example .streamlit\secrets.toml
 ```
 
-Edita `.streamlit\secrets.toml` con el token de Airtable y una cuenta administrativa temporal. Usa una contraseña temporal única de al menos 8 caracteres; guárdala solo en los secretos del servidor. Conserva los secretos fuera de Git. No escribas claves en `.streamlit\secrets.toml.example`, que solo es una plantilla. Luego inicia la app:
+Edita `.streamlit\secrets.toml` con el token de Airtable, una cuenta administrativa temporal y `app.whatsapp_admin_phone` con tu número de WhatsApp en formato internacional (solo dígitos, incluido el código de país; para Perú empieza con `51`). Usa una contraseña temporal única de al menos 8 caracteres; guárdala solo en los secretos del servidor. Conserva los secretos fuera de Git. No escribas claves en `.streamlit\secrets.toml.example`, que solo es una plantilla. Luego inicia la app:
 
 ```powershell
 streamlit run app.py
@@ -80,7 +80,7 @@ streamlit run app.py
 
 ## 3. Publicar para tus trabajadores
 
-Streamlit Community Cloud despliega desde un repositorio GitHub. Sube estos archivos a un repositorio privado, crea una app apuntando a `app.py` y carga los valores de `.streamlit\secrets.toml.example` en **App settings → Secrets**. No subas `.streamlit/secrets.toml` ni contraseñas reales al repositorio.
+Streamlit Community Cloud despliega desde un repositorio GitHub. Sube estos archivos a un repositorio privado, crea una app apuntando a `app.py` y carga tus secretos en **App settings → Secrets**, incluyendo `app.whatsapp_admin_phone` con el número internacional destinatario. No subas `.streamlit/secrets.toml` ni contraseñas reales al repositorio. Si el número no está configurado, los trabajadores verán una indicación y el botón de envío no aparecerá.
 
 Al abrir por primera vez, la app crea la cuenta administradora con las credenciales temporales del secreto. Inicia sesión y cámbiala desde **Cambiar mi contraseña**; luego elimina `bootstrap_admin_username` y `bootstrap_admin_password` de los secretos y vuelve a iniciar la app. En **Usuarios**, asigna a cada trabajador un nombre de usuario y una contraseña inicial de al menos 8 caracteres; comunícaselos de forma privada. Cada trabajador puede cambiar su propia contraseña. Desactiva su acceso desde el mismo panel cuando ya no trabaje contigo.
 
@@ -88,8 +88,8 @@ Si pierdes el acceso de administrador, configura un usuario y una contraseña te
 
 ## Uso y respaldos
 
-- El panel de trabajadores sirve para consultar cantidades y registrar entradas/salidas manualmente o desde una propuesta de foto. Cada fila debe incluir el código de lote y su cantidad; una operación puede contener varios lotes.
-- El administrador configura precios y catálogo, consulta el reporte de cada semana y descarga CSV. También puede elegir un día y abrir el resumen diario en WhatsApp; debe elegir el chat y confirmar el envío desde WhatsApp.
+- El panel de trabajadores sirve para consultar cantidades y registrar entradas/salidas manualmente o desde una propuesta de foto. Cada fila debe incluir el código de lote y su cantidad; una operación puede contener varios lotes. El botón de WhatsApp abre directamente el chat del número configurado con un resumen diario sin precios; la persona debe revisar y confirmar el envío en WhatsApp.
+- El administrador configura precios y catálogo, consulta el reporte de cada semana y descarga CSV. También puede elegir un día y abrir el resumen diario para compartirlo desde WhatsApp.
 - **Airtable y respaldos** permite descargar un JSON con los datos actuales. La app no elimina movimientos; desactiva productos o personas para conservar el historial.
 - El OCR requiere `tesseract-ocr` y el idioma `spa`. Reconoce texto impreso como `Barquimieles` o el alias confirmado `Barquiroll Premium`, y propone el código cuando aparece junto a `Lote`. `Contenido: 360 UND` identifica la presentación, no el número de presentaciones en inventario. La cantidad del movimiento debe aparecer indicada por separado; si no se reconoce, complétala en la tabla de lotes. La calidad depende de iluminación, nitidez y texto legible; siempre revisa y confirma la propuesta.
 - El formato monetario predeterminado es MXN; se puede cambiar `app.currency` en los secretos.
