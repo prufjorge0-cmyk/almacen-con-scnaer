@@ -13,6 +13,7 @@ from app import (
     parse_product,
     parse_quantity,
     peru_now,
+    reset_admin_password,
     stock_by_product,
     validate_legacy_backup,
     validate_username,
@@ -50,6 +51,18 @@ class FakeAirtableClient:
     def create_records(self, table, records):
         for fields in records:
             self.create_record(table, fields)
+
+    def update_record(self, table, record_id, fields):
+        records = {
+            "Usuarios": self.users,
+            "Productos": self.products,
+            "Movimientos": self.movements,
+        }[table]
+        for item in records:
+            if item["id"] == record_id:
+                item["fields"].update(fields)
+                return item
+        raise AssertionError("record not found")
 
 
 class InventoryTests(unittest.TestCase):
@@ -161,6 +174,52 @@ class InventoryTests(unittest.TestCase):
         self.assertTrue(verify_password("temporary admin password 123", fields["Hash contraseña"]))
         self.assertNotEqual(fields["Hash contraseña"], "temporary admin password 123")
         self.assertNotIn("Correo", fields)
+
+    def test_admin_password_reset_updates_only_matching_admin_hash(self):
+        old_hash = hash_password("old admin password 123")
+        admin = record(
+            "admin-record",
+            {
+                "Usuario": "owner",
+                "Hash contraseña": old_hash,
+                "Rol": "admin",
+                "Activo": True,
+            },
+        )
+        worker = record(
+            "worker-record",
+            {
+                "Usuario": "worker",
+                "Hash contraseña": hash_password("worker password 123"),
+                "Rol": "trabajador",
+                "Activo": True,
+            },
+        )
+        client = FakeAirtableClient([], [], [admin, worker])
+
+        users = reset_admin_password(
+            client, [admin, worker], "OWNER", "new admin password 123"
+        )
+
+        self.assertEqual(len(users), 2)
+        self.assertTrue(
+            verify_password(
+                "new admin password 123",
+                users[0]["fields"]["Hash contraseña"],
+            )
+        )
+        self.assertFalse(
+            verify_password(
+                "old admin password 123",
+                users[0]["fields"]["Hash contraseña"],
+            )
+        )
+        self.assertTrue(
+            verify_password(
+                "worker password 123",
+                users[1]["fields"]["Hash contraseña"],
+            )
+        )
 
     def test_first_admin_can_be_added_alongside_legacy_email_accounts(self):
         legacy_user = record(
