@@ -190,8 +190,8 @@ def validate_username(username: str) -> str:
 
 
 def validate_password(password: str) -> None:
-    if len(password) < 12:
-        raise AppError("La contraseña debe tener al menos 12 caracteres.")
+    if len(password) < 8:
+        raise AppError("La contraseña debe tener al menos 8 caracteres.")
     if len(password) > 256:
         raise AppError("La contraseña no puede superar 256 caracteres.")
 
@@ -1322,7 +1322,7 @@ def render_user_admin(client: AirtableClient, users: list[dict[str, Any]]) -> No
     st.caption("Crea una contraseña temporal y comunícala al trabajador de forma privada.")
     with st.form("new_worker_form", clear_on_submit=True):
         username = st.text_input("Usuario", max_chars=32).strip().lower()
-        password = st.text_input("Contraseña inicial (mínimo 12 caracteres)", type="password", max_chars=256)
+        password = st.text_input("Contraseña inicial (mínimo 8 caracteres)", type="password", max_chars=256)
         add_worker = st.form_submit_button("Autorizar trabajador")
     if add_worker:
         try:
@@ -1396,7 +1396,7 @@ def render_password_change(
     with st.expander("Cambiar mi contraseña"):
         with st.form("change_own_password", clear_on_submit=True):
             current_password = st.text_input("Contraseña actual", type="password", max_chars=256)
-            new_password = st.text_input("Nueva contraseña (mínimo 12 caracteres)", type="password", max_chars=256)
+            new_password = st.text_input("Nueva contraseña (mínimo 8 caracteres)", type="password", max_chars=256)
             confirm_password = st.text_input("Confirmar nueva contraseña", type="password", max_chars=256)
             submitted = st.form_submit_button("Actualizar contraseña")
         if submitted:
