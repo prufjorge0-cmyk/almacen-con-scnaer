@@ -11,7 +11,9 @@ from app import (
     import_legacy_backup,
     format_time,
     parse_product,
+    parse_lot,
     parse_quantity,
+    normalize_lot_lines,
     peru_now,
     reset_admin_password,
     stock_by_product,
@@ -93,6 +95,27 @@ class InventoryTests(unittest.TestCase):
         self.assertEqual(parse_quantity("Barquimieles de 360 unidades cantidad: 4"), 4)
         self.assertEqual(parse_quantity("3 cajas de Coronitas"), 3)
 
+    def test_parse_lot_and_normalize_dynamic_lot_rows(self):
+        self.assertEqual(parse_lot("LOTE: ab-123/9"), "AB-123/9")
+        self.assertEqual(parse_lot("LOTE N°: 7654"), "7654")
+        self.assertEqual(parse_lot("LOTE N?: AB-2026/07"), "AB-2026/07")
+        self.assertIsNone(parse_lot("PRODUCTO: BARQUIROLL PREMIUM"))
+        self.assertEqual(
+            normalize_lot_lines(
+                [
+                    {"Lote": " A-01 ", "Cantidad": 2},
+                    {"Lote": None, "Cantidad": float("nan")},
+                    {"Lote": "B-02", "Cantidad": 3.0},
+                ]
+            ),
+            [
+                {"Lote": "A-01", "Cantidad": 2},
+                {"Lote": "B-02", "Cantidad": 3},
+            ],
+        )
+        with self.assertRaises(AppError):
+            normalize_lot_lines([{"Lote": "A-01", "Cantidad": 1.5}])
+
     def test_stock_is_derived_from_movements(self):
         products = [
             record("p1", {"ID": "barquimieles-360", "Nombre": "Barquimieles", "Activo": True}),
@@ -147,6 +170,61 @@ class InventoryTests(unittest.TestCase):
         self.assertEqual(client.movements[0]["fields"]["Precio unitario"], 9)
         timestamp = client.movements[0]["fields"]["Fecha"]
         self.assertRegex(timestamp, r"^2026-10-24T\d{2}:\d{2}:\d{2}-05:00$")
+        self.assertEqual(client.movements[0]["fields"]["Lote"], "SIN LOTE")
+        self.assertTrue(client.movements[0]["fields"]["Grupo ID"])
+
+    def test_saves_multiple_lots_as_one_grouped_movement(self):
+        product = record(
+            "p1",
+            {"ID": "barquimieles-360", "Nombre": "Barquimieles", "Precio": 9, "Activo": True},
+        )
+        client = FakeAirtableClient([product], [])
+        from app import add_movement_batch
+
+        add_movement_batch(
+            client,
+            movement_type="Entrada",
+            product_id="barquimieles-360",
+            lot_lines=[
+                {"Lote": "A-01", "Cantidad": 2},
+                {"Lote": "B-02", "Cantidad": 3},
+            ],
+            movement_date=date(2026, 10, 24),
+            note="recepción",
+            username="owner",
+        )
+        fields = [movement["fields"] for movement in client.movements]
+        self.assertEqual(len(fields), 2)
+        self.assertEqual([movement["Lote"] for movement in fields], ["A-01", "B-02"])
+        self.assertEqual([movement["Cantidad"] for movement in fields], [2, 3])
+        self.assertEqual(fields[0]["Grupo ID"], fields[1]["Grupo ID"])
+        self.assertNotEqual(fields[0]["ID"], fields[1]["ID"])
+
+    def test_multi_lot_exit_rejects_total_above_stock_without_writing(self):
+        product = record(
+            "p1",
+            {"ID": "barquimieles-360", "Nombre": "Barquimieles", "Precio": 9, "Activo": True},
+        )
+        client = FakeAirtableClient(
+            [product],
+            [record("m1", {"ID": "m1", "Producto ID": "barquimieles-360", "Tipo": "Entrada", "Cantidad": 4, "Fecha": "2026-10-24"})],
+        )
+        from app import add_movement_batch
+
+        with self.assertRaisesRegex(AppError, "Existencia insuficiente"):
+            add_movement_batch(
+                client,
+                movement_type="Salida",
+                product_id="barquimieles-360",
+                lot_lines=[
+                    {"Lote": "A-01", "Cantidad": 2},
+                    {"Lote": "B-02", "Cantidad": 3},
+                ],
+                movement_date=date(2026, 10, 24),
+                note="",
+                username="worker",
+            )
+        self.assertEqual(len(client.movements), 1)
 
     def test_passwords_are_salted_hashed_and_verified(self):
         first_hash = hash_password("correct horse battery staple")
