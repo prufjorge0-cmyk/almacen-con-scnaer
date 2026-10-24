@@ -14,6 +14,7 @@ import unicodedata
 import uuid
 from datetime import date, datetime, timedelta
 from typing import Any
+from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
 import pytesseract
@@ -1132,9 +1133,87 @@ def movement_rows(
     return sorted(rows, key=lambda item: (item[0], item[2].get("ID", "")), reverse=True)
 
 
+def daily_report_message(
+    movements: list[dict[str, Any]],
+    products: list[dict[str, Any]],
+    report_date: date,
+    currency: str,
+) -> str:
+    rows = movement_rows(movements, report_date, report_date)
+    names = {
+        str(record_fields(record).get("ID", "")): str(
+            record_fields(record).get("Nombre", "")
+        )
+        for record in products
+    }
+    sections = [f"📦 Reporte diario — {report_date:%d/%m/%Y}"]
+    for movement_type, title in (("Entrada", "Entradas"), ("Salida", "Salidas")):
+        totals: dict[tuple[str, str], int] = {}
+        total_quantity = 0
+        total_value = 0.0
+        priced_quantity = 0
+        unpriced_movements = 0
+        for _, _, fields in rows:
+            if fields.get("Tipo") != movement_type:
+                continue
+            quantity = int(fields.get("Cantidad", 0))
+            product_id = str(fields.get("Producto ID", ""))
+            product_name = str(
+                fields.get("Producto") or names.get(product_id, product_id)
+            )
+            lot = str(fields.get("Lote") or "SIN LOTE")
+            key = (product_name, lot)
+            totals[key] = totals.get(key, 0) + quantity
+            total_quantity += quantity
+            price = fields.get("Precio unitario")
+            if isinstance(price, (int, float)) and not isinstance(price, bool):
+                total_value += price * quantity
+                priced_quantity += quantity
+            else:
+                unpriced_movements += 1
+
+        sections.append(f"\n{title}: {total_quantity} caja(s)")
+        for (product_name, lot), quantity in sorted(totals.items()):
+            sections.append(f"• {product_name} | Lote {lot}: {quantity} caja(s)")
+        if priced_quantity:
+            label = "Valor registrado"
+            if unpriced_movements:
+                label = "Valor parcial (hay movimientos sin precio)"
+            sections.append(f"{label}: {format_money(total_value, currency)}")
+        elif unpriced_movements:
+            sections.append("Valor: sin precios configurados")
+
+    if not rows:
+        sections.append("\nSin movimientos registrados ese día.")
+    sections.append("\nRegistro de barquillos")
+    return "\n".join(sections)
+
+
+def whatsapp_share_url(message: str) -> str:
+    return f"https://wa.me/?text={quote(message, safe='')}"
+
+
 def render_report(
     movements: list[dict[str, Any]], products: list[dict[str, Any]], currency: str
 ) -> None:
+    st.subheader("Reporte diario por WhatsApp")
+    daily_date = st.date_input(
+        "Día del reporte",
+        value=peru_now().date(),
+        key="daily_report_date",
+    )
+    daily_message = daily_report_message(movements, products, daily_date, currency)
+    st.code(daily_message, language=None)
+    st.link_button(
+        "Abrir WhatsApp para compartir",
+        whatsapp_share_url(daily_message),
+        type="primary",
+    )
+    st.caption(
+        "WhatsApp abrirá la vista para elegir un chat. Revisa el destinatario y pulsa Enviar; la app no envía mensajes automáticamente."
+    )
+
+    st.divider()
     st.subheader("Reporte semanal")
     selected_date = st.date_input("Elige una fecha dentro de la semana", value=peru_now().date(), key="report_date")
     start = monday_of(selected_date)

@@ -7,6 +7,7 @@ from app import (
     add_movement,
     authenticate_user,
     bootstrap_first_admin,
+    daily_report_message,
     hash_password,
     import_legacy_backup,
     format_time,
@@ -21,6 +22,7 @@ from app import (
     validate_legacy_backup,
     validate_username,
     verify_password,
+    whatsapp_share_url,
 )
 
 
@@ -69,6 +71,75 @@ class FakeAirtableClient:
 
 
 class InventoryTests(unittest.TestCase):
+    def test_daily_report_groups_movements_by_product_and_lot(self):
+        products = [
+            record(
+                "p1",
+                {
+                    "ID": "barquimieles-360",
+                    "Nombre": "Barquimieles de 360",
+                    "Activo": True,
+                },
+            )
+        ]
+        movements = [
+            record(
+                "m1",
+                {
+                    "ID": "m1",
+                    "Tipo": "Entrada",
+                    "Producto ID": "barquimieles-360",
+                    "Cantidad": 2,
+                    "Lote": "A-01",
+                    "Fecha": "2026-10-24T08:00:00-05:00",
+                    "Precio unitario": 9,
+                },
+            ),
+            record(
+                "m2",
+                {
+                    "ID": "m2",
+                    "Tipo": "Salida",
+                    "Producto ID": "barquimieles-360",
+                    "Cantidad": 1,
+                    "Lote": "A-01",
+                    "Fecha": "2026-10-24T10:00:00-05:00",
+                    "Precio unitario": 9,
+                },
+            ),
+            record(
+                "m3",
+                {
+                    "ID": "m3",
+                    "Tipo": "Entrada",
+                    "Producto ID": "barquimieles-360",
+                    "Cantidad": 4,
+                    "Lote": "B-02",
+                    "Fecha": "2026-10-23T10:00:00-05:00",
+                    "Precio unitario": 9,
+                },
+            ),
+        ]
+
+        message = daily_report_message(
+            movements, products, date(2026, 10, 24), "PEN"
+        )
+
+        self.assertIn("Reporte diario — 24/10/2026", message)
+        self.assertIn("Entradas: 2 caja(s)", message)
+        self.assertIn("Lote A-01: 2 caja(s)", message)
+        self.assertIn("Salidas: 1 caja(s)", message)
+        self.assertIn("PEN 18.00", message)
+        self.assertNotIn("B-02", message)
+
+    def test_daily_report_and_whatsapp_url_handle_empty_day_and_unicode(self):
+        message = daily_report_message([], [], date(2026, 10, 24), "PEN")
+        self.assertIn("Sin movimientos registrados ese día.", message)
+        url = whatsapp_share_url("Reporte Perú: lote A-01")
+        self.assertTrue(url.startswith("https://wa.me/?text="))
+        self.assertIn("%C3%BA", url)
+        self.assertIn("%20", url)
+
     def test_peru_timezone_is_used_for_current_time_and_movement_time(self):
         now = peru_now()
         self.assertEqual(now.utcoffset().total_seconds(), -5 * 60 * 60)
